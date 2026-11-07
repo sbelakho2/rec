@@ -43,7 +43,7 @@ class ScriptedEngine:
     startup = {"engine_experiment": "scripted", "kv_format": "none"}
     prompt = Engine.prompt
 
-    def __init__(self, model_dir, manifest, *, context_limit, enforce_tool_schemas):
+    def __init__(self, model_dir, manifest, *, context_limit, enforce_tool_schemas, **kwargs):
         self.context_limit = context_limit
         self.tokenizer = flint_tokenizer()
         self.constraints = ConstraintCompiler(self.tokenizer)

@@ -55,6 +55,24 @@ def main():
         help="append per-request metrics to this JSONL file (default: disabled)",
     )
     parser.add_argument(
+        "--snapshot-dir",
+        type=Path,
+        default=os.environ.get("REC_SNAPSHOT_DIR"),
+        help="directory for opt-in durable prefix snapshots (env: REC_SNAPSHOT_DIR)",
+    )
+    parser.add_argument(
+        "--snapshot-max-bytes",
+        type=int,
+        default=int(os.environ.get("REC_SNAPSHOT_MAX_BYTES", "0")),
+        help="prefix snapshot budget in bytes; 0 is unlimited (env: REC_SNAPSHOT_MAX_BYTES)",
+    )
+    parser.add_argument(
+        "--snapshot-min-tokens",
+        type=int,
+        default=int(os.environ.get("REC_SNAPSHOT_MIN_TOKENS", "4096")),
+        help="minimum prompt tokens to snapshot (env: REC_SNAPSHOT_MIN_TOKENS)",
+    )
+    parser.add_argument(
         "--temperature",
         type=float,
         default=1.0,
@@ -102,6 +120,9 @@ def main():
         args.manifest,
         context_limit=args.context_limit,
         enforce_tool_schemas=args.enforce_tool_schemas,
+        snapshot_dir=args.snapshot_dir,
+        snapshot_max_bytes=args.snapshot_max_bytes,
+        snapshot_min_tokens=args.snapshot_min_tokens,
     )
     print(
         json.dumps(

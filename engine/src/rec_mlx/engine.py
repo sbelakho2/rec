@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import platform
 import resource
 import subprocess
@@ -53,6 +54,9 @@ class Engine:
         *,
         context_limit: int,
         enforce_tool_schemas: bool = False,
+        snapshot_dir: Path | None = None,
+        snapshot_max_bytes: int = 0,
+        snapshot_min_tokens: int = 4096,
     ):
         if platform.system() != "Darwin" or platform.machine() != "arm64":
             raise RuntimeError("Flint requires an Apple Silicon Mac")
@@ -109,6 +113,23 @@ class Engine:
             "weight_format": self.identity["weight_format"],
             "kv_format": self.identity["kv_format"],
         }
+        self.snapshots = None
+        if snapshot_dir is not None:
+            from .m4_max import KVStorage as SnapshotStorage
+            from .snapshots import SnapshotStore, model_fingerprint
+
+            if snapshot_max_bytes < 0 or snapshot_min_tokens < 0:
+                raise ValueError("snapshot byte and token limits must be nonnegative")
+            self.snapshots = SnapshotStore(
+                snapshot_dir,
+                model_fingerprint(self.identity, self.startup),
+                storage_factory=lambda rows, capacity, block_tokens: SnapshotStorage(
+                    rows, capacity, block_tokens=block_tokens
+                ),
+                layer_factory=lambda count, storage: self.runtime.model.make_cache(count, storage),
+                max_bytes=snapshot_max_bytes,
+                min_tokens=snapshot_min_tokens,
+            )
 
     @property
     def constraints(self):
@@ -244,6 +265,19 @@ class Engine:
         start = time.perf_counter()
         reason = "length"
         try:
+            snapshots = getattr(self, "snapshots", None)
+            if snapshots is not None and self._prefix_preparation is None:
+                current = 0
+                if self._prompt_cache is not None:
+                    for previous, wanted in zip(self._prompt_cache.tokens, ids):
+                        if previous != wanted:
+                            break
+                        current += 1
+                if snapshots.best_prefix_length(ids) > current:
+                    restored = snapshots.load(ids)
+                    if restored is not None:
+                        self._prompt_cache = restored
+                        logging.info("Loaded prefix snapshot: tokens=%d", len(restored.tokens))
             preparation = self._prefix_preparation
             prefix = self._take_prefix(ids)
             from .prefix import PrefillCancelled
@@ -390,6 +424,12 @@ class Engine:
                 },
             }
         finally:
+            if getattr(self, "snapshots", None) is not None and self._prompt_cache is not None:
+                try:
+                    if self._prompt_cache.tokens == list(ids):
+                        self.snapshots.save(self._prompt_cache, ids)
+                except Exception as error:
+                    logging.warning("Prefix snapshot save failed: %s", error)
             if generated:
                 self._schedule_prefix(ids, generated)
             mx.synchronize()
