@@ -6,7 +6,7 @@ import mlx.core as mx
 
 from rec_mlx.cache import FixedKVCache, FixedSlidingKVCache, copy_array
 from rec_mlx.m4_max import KVStorage
-from rec_mlx.prefix import PromptCache
+from rec_mlx.prefix import Checkpoint, PromptCache
 from rec_mlx.snapshots import SnapshotStore, model_fingerprint, token_digest
 
 TOKENS = list(range(8))
@@ -115,6 +115,35 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(restored.tokens, TOKENS)
             self.assertIsNone(repository.load([0, 1, 2, 99, 4, 5, 6, 7]))
             self.assertIsNone(repository.load([0, 1, 2]))
+
+    def test_checkpoint_snapshot_supports_prefix_extension(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = make_cache()
+            ring = FixedSlidingKVCache(
+                max_sequence_tokens=8, num_kv_heads=4, head_dim=128, window_size=8
+            )
+            for index in range(4):
+                keys = mx.full((1, 4, 1, 128), float(index), dtype=mx.bfloat16)
+                ring.update_and_fetch(keys, -keys)
+            ring.offset = 4
+            cache.checkpoints = [
+                Checkpoint(
+                    4,
+                    [(ring.key_buffers[0], ring.value_buffers[0], ring._valid, ring._ring_index)],
+                    mx.arange(4, dtype=mx.float32).reshape(1, 1, 4),
+                )
+            ]
+            saved_global = copy_array(cache.storage.layer(0, 4))
+            saved_sliding = copy_array(ring._prior()[0])
+            repository = store(directory)
+            self.assertIsNotNone(repository.save(cache, TOKENS))
+            self.assertEqual(len(repository._entries), 2)
+            restored = repository.load(TOKENS[:4] + [99])
+            self.assertIsNotNone(restored)
+            self.assertEqual(restored.tokens, TOKENS[:4])
+            self.assertEqual(restored.layers[0].offset, 4)
+            self.assertTrue(mx.array_equal(restored.storage.layer(0, 4), saved_global).item())
+            self.assertTrue(mx.array_equal(restored.layers[1]._prior()[0], saved_sliding).item())
 
     def test_fingerprint_mismatch_is_not_loaded(self):
         with tempfile.TemporaryDirectory() as directory:

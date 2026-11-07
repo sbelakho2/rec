@@ -348,6 +348,80 @@ class SnapshotStore:
             "payload_sha256": "",
             "created_at": time.time(),
         }
+        payload = self._persist(arrays, manifest, count)
+        if payload is not None and cache.checkpoints:
+            checkpoint = cache.checkpoints[-1]
+            if self.min_tokens <= checkpoint.position < count:
+                self._save_checkpoint(
+                    tokens, checkpoint, arrays, global_layers, sliding_layers, rows, block_tokens
+                )
+        return payload
+
+    def _save_checkpoint(
+        self, tokens, checkpoint, full_arrays, global_layers, sliding_layers, rows, block_tokens
+    ):
+        count = checkpoint.position
+        key = _sha_bytes((self.fingerprint + token_digest(tokens[:count])).encode())
+        if key in self._entries:
+            return
+        arrays = {"tokens": mx.array(tokens[:count], dtype=mx.int32)}
+        saved_global = []
+        for layer in global_layers:
+            index = layer["index"]
+            keys = full_arrays[f"g{index}_k"][..., :count, :]
+            values = full_arrays[f"g{index}_v"][..., :count, :]
+            arrays[f"g{index}_k"] = keys
+            arrays[f"g{index}_v"] = values
+            saved_global.append(
+                {
+                    "index": index,
+                    "k_shape": list(keys.shape),
+                    "v_shape": list(values.shape),
+                }
+            )
+        saved_sliding = []
+        for position, (keys, values, valid, ring_index) in enumerate(checkpoint.sliding):
+            if position >= len(sliding_layers):
+                break
+            layer = sliding_layers[position]
+            index = layer["index"]
+            arrays[f"s{index}_k0"] = keys
+            arrays[f"s{index}_k1"] = mx.zeros_like(keys)
+            arrays[f"s{index}_v0"] = values
+            arrays[f"s{index}_v1"] = mx.zeros_like(values)
+            saved_sliding.append(
+                {
+                    "index": index,
+                    "capacity": keys.shape[-2],
+                    "offset": count,
+                    "valid": valid,
+                    "slot": 0,
+                    "ring_index": ring_index,
+                    "window_size": layer["window_size"],
+                }
+            )
+        arrays["logits"] = checkpoint.logits
+        _eval(list(arrays.values()))
+        manifest = {
+            "magic": MAGIC,
+            "format_version": FORMAT_VERSION,
+            "key": key,
+            "model_fingerprint": self.fingerprint,
+            "token_count": count,
+            "token_sha256": token_digest(tokens[:count]),
+            "block_tokens": block_tokens,
+            "rows": rows,
+            "global_layers": saved_global,
+            "sliding_layers": saved_sliding,
+            "checkpoints": [],
+            "logits": _array_meta(checkpoint.logits),
+            "payload_sha256": "",
+            "created_at": time.time(),
+        }
+        self._persist(arrays, manifest, count)
+
+    def _persist(self, arrays, manifest, count):
+        key = manifest["key"]
         stamp = f"{os.getpid()}.{time.time_ns()}"
         payload_tmp = self.directory / f".{key}.{stamp}.payload.safetensors"
         manifest_tmp = self.directory / f".{key}.{stamp}.json.tmp"
