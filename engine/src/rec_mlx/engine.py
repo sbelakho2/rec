@@ -231,6 +231,38 @@ class Engine:
         if len(generated) >= self.runtime.prefill_chunk_size:
             self._prefix_preparation = PrefixPreparation(self._prompt_cache, ids + generated)
 
+    def capture_prefix(self):
+        if not getattr(self, "owned_snapshots", False):
+            raise RuntimeError("owned snapshots are off; enable --owned-snapshots")
+        if self._prompt_cache is None:
+            raise RuntimeError("no prompt cache to snapshot")
+        from .owned_snapshot import capture
+        from .snapshots import model_fingerprint
+
+        return capture(
+            self._prompt_cache,
+            self._prompt_cache.tokens,
+            model_fingerprint(self.identity, self.startup),
+        )
+
+    def restore_prefix(self, snapshot):
+        if not getattr(self, "owned_snapshots", False):
+            raise RuntimeError("owned snapshots are off; enable --owned-snapshots")
+        from .m4_max import KVStorage
+        from .owned_snapshot import restore
+        from .snapshots import model_fingerprint
+
+        cache = restore(
+            snapshot,
+            model_fingerprint(self.identity, self.startup),
+            lambda rows, capacity, block_tokens: KVStorage(
+                rows, capacity, block_tokens=block_tokens
+            ),
+            lambda count, storage: self.runtime.model.make_cache(count, storage),
+        )
+        self._prompt_cache = cache
+        return cache
+
     def _take_prefix(self, ids):
         prefix, self._prompt_cache = self._prompt_cache, None
         pending, self._prefix_preparation = self._prefix_preparation, None
