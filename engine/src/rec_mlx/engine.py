@@ -57,6 +57,7 @@ class Engine:
         snapshot_dir: Path | None = None,
         snapshot_max_bytes: int = 0,
         snapshot_min_tokens: int = 4096,
+        owned_snapshots: bool = False,
     ):
         if platform.system() != "Darwin" or platform.machine() != "arm64":
             raise RuntimeError("Flint requires an Apple Silicon Mac")
@@ -114,6 +115,7 @@ class Engine:
             "kv_format": self.identity["kv_format"],
         }
         self.snapshots = None
+        self.owned_snapshots = bool(owned_snapshots)
         if snapshot_dir is not None:
             from .m4_max import KVStorage as SnapshotStorage
             from .snapshots import SnapshotStore, model_fingerprint

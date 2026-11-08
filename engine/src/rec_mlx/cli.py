@@ -73,6 +73,11 @@ def main():
         help="minimum prompt tokens to snapshot (env: REC_SNAPSHOT_MIN_TOKENS)",
     )
     parser.add_argument(
+        "--owned-snapshots",
+        action="store_true",
+        help="enable in-memory owned branch snapshots (off by default)",
+    )
+    parser.add_argument(
         "--temperature",
         type=float,
         default=1.0,
@@ -123,6 +128,7 @@ def main():
         snapshot_dir=args.snapshot_dir,
         snapshot_max_bytes=args.snapshot_max_bytes,
         snapshot_min_tokens=args.snapshot_min_tokens,
+        owned_snapshots=args.owned_snapshots,
     )
     print(
         json.dumps(
